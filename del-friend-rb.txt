@@ -1,0 +1,372 @@
+// ==UserScript==
+// @name         Roblox Unfriend Tool
+// @namespace    http://tampermonkey.net/
+// @version      2.0
+// @match        https://www.roblox.com/users/*/friends*
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    if (document.getElementById('rbt-panel')) return;
+
+    let running = false;
+    let stopped = false;
+    let csrfToken = null;
+
+    const style = document.createElement('style');
+    style.textContent = `
+        #rbt-panel * { box-sizing: border-box; font-family: 'Courier New', monospace; }
+        #rbt-panel {
+            position: fixed;
+            top: 80px;
+            right: 20px;
+            width: 320px;
+            background: #0f0f0f;
+            border: 1px solid #2a2a2a;
+            border-radius: 12px;
+            padding: 0;
+            z-index: 999999;
+            color: #e0e0e0;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+            user-select: none;
+        }
+        #rbt-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 14px 10px;
+            border-bottom: 1px solid #1e1e1e;
+            cursor: move;
+        }
+        #rbt-title { font-size: 13px; font-weight: bold; color: #e0e0e0; letter-spacing: 0.5px; }
+        #rbt-dots { display: flex; gap: 5px; }
+        .rbt-dot { width: 9px; height: 9px; border-radius: 50%; }
+        #rbt-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+        .rbt-label { font-size: 11px; color: #666; margin-bottom: 4px; letter-spacing: 0.4px; }
+        .rbt-row { display: flex; align-items: center; gap: 8px; }
+        #rbt-delay-slider {
+            flex: 1;
+            -webkit-appearance: none;
+            height: 3px;
+            border-radius: 2px;
+            background: #2a2a2a;
+            outline: none;
+            cursor: pointer;
+        }
+        #rbt-delay-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px; height: 14px;
+            border-radius: 50%;
+            background: #00d4aa;
+            cursor: pointer;
+            border: 2px solid #0f0f0f;
+        }
+        #rbt-delay-val { font-size: 12px; color: #00d4aa; min-width: 50px; text-align: right; }
+        #rbt-whitelist {
+            width: 100%;
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 6px;
+            padding: 7px 9px;
+            color: #e0e0e0;
+            font-size: 12px;
+            font-family: 'Courier New', monospace;
+            resize: vertical;
+            min-height: 60px;
+            outline: none;
+            transition: border-color 0.2s;
+            line-height: 1.5;
+        }
+        #rbt-whitelist:focus { border-color: #00d4aa55; }
+        #rbt-tags { display: flex; flex-wrap: wrap; gap: 4px; min-height: 4px; }
+        .rbt-tag {
+            background: #0d2b24;
+            color: #00d4aa;
+            border: 1px solid #00d4aa33;
+            border-radius: 4px;
+            padding: 2px 7px;
+            font-size: 11px;
+        }
+        #rbt-log {
+            background: #0a0a0a;
+            border: 1px solid #1e1e1e;
+            border-radius: 6px;
+            padding: 7px 9px;
+            font-size: 11px;
+            min-height: 70px;
+            max-height: 130px;
+            overflow-y: auto;
+            color: #888;
+            line-height: 1.7;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .rbt-log-ok { color: #00d4aa; }
+        .rbt-log-err { color: #e25555; }
+        .rbt-log-info { color: #888; }
+        .rbt-log-keep { color: #3ab44a; }
+        #rbt-progress-bar-wrap { background: #1a1a1a; border-radius: 4px; height: 4px; overflow: hidden; }
+        #rbt-progress-bar { height: 100%; background: #00d4aa; border-radius: 4px; width: 0%; transition: width 0.3s; }
+        #rbt-stat { font-size: 11px; color: #555; text-align: right; }
+        .rbt-btn {
+            flex: 1;
+            padding: 8px 0;
+            border: 1px solid #2a2a2a;
+            border-radius: 6px;
+            background: transparent;
+            color: #e0e0e0;
+            font-size: 12px;
+            font-family: 'Courier New', monospace;
+            cursor: pointer;
+            letter-spacing: 0.3px;
+            transition: all 0.15s;
+        }
+        .rbt-btn:hover { background: #1a1a1a; border-color: #444; }
+        .rbt-btn:active { transform: scale(0.97); }
+        #rbt-btn-run { background: #003d2e; border-color: #00d4aa44; color: #00d4aa; font-weight: bold; }
+        #rbt-btn-run:hover { background: #005040; border-color: #00d4aa88; }
+        #rbt-btn-run:disabled { opacity: 0.4; cursor: default; }
+        #rbt-btn-stop { border-color: #e2555533; color: #e25555; }
+        #rbt-btn-stop:hover { background: #1a0a0a; border-color: #e25555; }
+        #rbt-close { background: none; border: none; color: #444; font-size: 16px; cursor: pointer; line-height: 1; padding: 0 2px; transition: color 0.15s; }
+        #rbt-close:hover { color: #e25555; }
+        #rbt-minimize { background: none; border: none; color: #444; font-size: 14px; cursor: pointer; line-height: 1; padding: 0 2px; transition: color 0.15s; }
+        #rbt-minimize:hover { color: #00d4aa; }
+    `;
+    document.head.appendChild(style);
+
+    const panel = document.createElement('div');
+    panel.id = 'rbt-panel';
+    panel.innerHTML = `
+        <div id="rbt-header">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <div id="rbt-dots">
+                    <div class="rbt-dot" style="background:#e25555;"></div>
+                    <div class="rbt-dot" style="background:#efad33;"></div>
+                    <div class="rbt-dot" style="background:#3ab44a;"></div>
+                </div>
+                <span id="rbt-title">UNFRIEND TOOL</span>
+            </div>
+            <div style="display:flex;gap:4px;">
+                <button id="rbt-minimize">─</button>
+                <button id="rbt-close">✕</button>
+            </div>
+        </div>
+        <div id="rbt-body">
+            <div>
+                <div class="rbt-label">TỐC ĐỘ XÓA</div>
+                <div class="rbt-row">
+                    <span style="font-size:10px;color:#444;">NHANH</span>
+                    <input type="range" id="rbt-delay-slider" min="300" max="5000" value="1200" step="100">
+                    <span style="font-size:10px;color:#444;">CHẬM</span>
+                    <span id="rbt-delay-val">1200ms</span>
+                </div>
+            </div>
+            <div>
+                <div class="rbt-label">WHITELIST <span style="color:#555;">(giữ lại)</span></div>
+                <textarea id="rbt-whitelist" placeholder="username1&#10;username2">Dukacuti
+GwynGG123
+impro123_haha</textarea>
+                <div id="rbt-tags" style="margin-top:5px;"></div>
+            </div>
+            <div>
+                <div class="rbt-label">TIẾN ĐỘ</div>
+                <div id="rbt-progress-bar-wrap"><div id="rbt-progress-bar"></div></div>
+                <div id="rbt-stat" style="margin-top:4px;">—</div>
+            </div>
+            <div>
+                <div class="rbt-label">LOG</div>
+                <div id="rbt-log"></div>
+            </div>
+            <div class="rbt-row">
+                <button class="rbt-btn" id="rbt-btn-run">▶ CHẠY</button>
+                <button class="rbt-btn" id="rbt-btn-stop">■ DỪNG</button>
+                <button class="rbt-btn" id="rbt-btn-clear" style="flex:0.5;">CLR</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(panel);
+
+    const sliderEl = document.getElementById('rbt-delay-slider');
+    const delayValEl = document.getElementById('rbt-delay-val');
+    const whitelistEl = document.getElementById('rbt-whitelist');
+    const tagsEl = document.getElementById('rbt-tags');
+    const logEl = document.getElementById('rbt-log');
+    const progressBar = document.getElementById('rbt-progress-bar');
+    const statEl = document.getElementById('rbt-stat');
+    const btnRun = document.getElementById('rbt-btn-run');
+    const btnStop = document.getElementById('rbt-btn-stop');
+    const btnClear = document.getElementById('rbt-btn-clear');
+    const btnClose = document.getElementById('rbt-close');
+    const btnMin = document.getElementById('rbt-minimize');
+    const body = document.getElementById('rbt-body');
+
+    const getWhitelist = () => whitelistEl.value.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+
+    const renderTags = () => {
+        tagsEl.innerHTML = getWhitelist().map(n => `<span class="rbt-tag">@${n}</span>`).join('');
+    };
+
+    const addLog = (msg, cls = 'rbt-log-info') => {
+        const span = document.createElement('span');
+        span.className = cls;
+        span.textContent = msg + '\n';
+        logEl.appendChild(span);
+        logEl.scrollTop = logEl.scrollHeight;
+    };
+
+    const setProgress = (done, total) => {
+        const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+        progressBar.style.width = pct + '%';
+        statEl.textContent = `${done} / ${total} (${pct}%)`;
+    };
+
+    let isDragging = false, dragX = 0, dragY = 0;
+    document.getElementById('rbt-header').addEventListener('mousedown', e => {
+        if (e.target === btnClose || e.target === btnMin) return;
+        isDragging = true;
+        const rect = panel.getBoundingClientRect();
+        dragX = e.clientX - rect.left;
+        dragY = e.clientY - rect.top;
+        e.preventDefault();
+    });
+    document.addEventListener('mousemove', e => {
+        if (!isDragging) return;
+        panel.style.left = (e.clientX - dragX) + 'px';
+        panel.style.top = (e.clientY - dragY) + 'px';
+        panel.style.right = 'auto';
+    });
+    document.addEventListener('mouseup', () => isDragging = false);
+
+    let minimized = false;
+    btnMin.addEventListener('click', () => {
+        minimized = !minimized;
+        body.style.display = minimized ? 'none' : 'flex';
+        btnMin.textContent = minimized ? '□' : '─';
+    });
+
+    btnClose.addEventListener('click', () => panel.remove());
+    btnClear.addEventListener('click', () => logEl.innerHTML = '');
+    sliderEl.addEventListener('input', () => delayValEl.textContent = sliderEl.value + 'ms');
+    whitelistEl.addEventListener('input', renderTags);
+    renderTags();
+
+    const fetchCsrf = async () => {
+        try {
+            const res = await fetch('https://auth.roblox.com/v2/logout', { method: 'POST', credentials: 'include' });
+            const token = res.headers.get('x-csrf-token');
+            if (token) return token;
+            throw new Error('no token');
+        } catch (e) {
+            addLog('csrf error: ' + e.message, 'rbt-log-err');
+            return null;
+        }
+    };
+
+    const unfriend = async (userId, username, token) => {
+        const res = await fetch(`https://friends.roblox.com/v1/users/${userId}/unfriend`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': token }
+        });
+        if (res.ok) {
+            addLog(`[del] @${username}`, 'rbt-log-ok');
+            const el = document.querySelector(`a[href*="/users/${userId}"]`);
+            if (el) {
+                const card = el.closest('li, .avatar-card-container, div[class*="friend"], div[class*="tile"]');
+                if (card) card.style.opacity = '0.25';
+            }
+        } else {
+            addLog(`[${res.status}] @${username}`, 'rbt-log-err');
+        }
+    };
+
+    const goNextPage = () => {
+        const selectors = ['[aria-label="Next"]', '.pager-next a', 'a[title="Next"]', '[data-testid="next-page"]', '.page-item:last-child a', 'li.next a'];
+        for (const sel of selectors) {
+            const el = document.querySelector(sel);
+            if (el && !el.closest('[disabled]') && !el.classList.contains('disabled')) {
+                el.click();
+                return true;
+            }
+        }
+        return false;
+    };
+
+    btnRun.addEventListener('click', async () => {
+        if (running) return;
+        running = true;
+        stopped = false;
+        btnRun.disabled = true;
+        logEl.innerHTML = '';
+
+        const delay = parseInt(sliderEl.value);
+        const whitelist = getWhitelist();
+
+        csrfToken = await fetchCsrf();
+        if (!csrfToken) {
+            addLog('failed to get csrf token', 'rbt-log-err');
+            running = false;
+            btnRun.disabled = false;
+            return;
+        }
+
+        const profileLinks = document.querySelectorAll('a[href*="/users/"]');
+        if (!profileLinks.length) {
+            addLog('no friends found', 'rbt-log-err');
+            running = false;
+            btnRun.disabled = false;
+            return;
+        }
+
+        const processedIds = new Set();
+        const queue = [];
+
+        profileLinks.forEach(link => {
+            const match = link.getAttribute('href')?.match(/\/users\/(\d+)/);
+            if (!match) return;
+            const userId = match[1];
+            if (processedIds.has(userId)) return;
+            processedIds.add(userId);
+
+            const container = link.closest('li, .avatar-card-container, div[class*="friend"], div[class*="tile"]');
+            let username = '';
+            if (container) {
+                const m = container.innerText.match(/@(\w+)/);
+                if (m) username = m[1];
+            }
+            if (!username) return;
+
+            if (whitelist.includes(username)) {
+                addLog(`[keep] @${username}`, 'rbt-log-keep');
+                if (container) container.style.outline = '2px solid #3ab44a';
+            } else {
+                queue.push({ userId, username });
+            }
+        });
+
+        addLog(`${queue.length} queued`, 'rbt-log-info');
+        setProgress(0, queue.length);
+
+        for (let i = 0; i < queue.length; i++) {
+            if (stopped) { addLog('stopped', 'rbt-log-err'); break; }
+            await unfriend(queue[i].userId, queue[i].username, csrfToken);
+            setProgress(i + 1, queue.length);
+            await new Promise(r => setTimeout(r, delay));
+        }
+
+        if (!stopped) {
+            if (!goNextPage()) addLog('done', 'rbt-log-ok');
+        }
+
+        running = false;
+        btnRun.disabled = false;
+    });
+
+    btnStop.addEventListener('click', () => {
+        if (running) { stopped = true; addLog('stopping...', 'rbt-log-err'); }
+    });
+
+})();
