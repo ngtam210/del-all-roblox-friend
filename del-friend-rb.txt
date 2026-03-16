@@ -1,11 +1,9 @@
 // ==UserScript==
 // @name         Roblox Unfriend Tool
-// @namespace    http://tampermonkey.net/
 // @version      2.0
 // @match        https://www.roblox.com/users/*/friends*
-// @grant        none
 // ==/UserScript==
-
+// DUOC TAO BOI TAM DEP TRAI VL 2010
 (function () {
     'use strict';
 
